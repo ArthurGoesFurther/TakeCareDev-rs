@@ -180,6 +180,7 @@ impl eframe::App for BreakApp {
         if let Some(name) = action {
             ipc::say(&FromChild::BreakAction(name.into()));
         }
+        super::present(&ctx);
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 }

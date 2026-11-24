@@ -174,6 +174,91 @@ mod sys {
     }
 }
 
+// ---------- Windows: transparent windows ----------
+//
+// A transparent OpenGL window is unreliable on Windows: depending on the driver and DWM, what egui
+// draws shows up, or the window is an empty frame (the face), or a blank white box (the break card).
+// So transparent windows are layered windows fed with `UpdateLayeredWindow`: every frame egui paints
+// as usual, the frame is read back and handed to Windows with its per-pixel alpha. Pixels with zero
+// alpha are also click-through, so the break card's transparent margin does not block the desktop.
+
+/// Makes `hwnd` a layered window whose content comes from [`present_layered`].
+/// `click_through` also lets clicks on opaque pixels through (the face).
+#[cfg(target_os = "windows")]
+pub fn layered_window(hwnd: isize, click_through: bool) {
+    use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+
+    // Each window process has exactly one such window.
+    static ORIGINAL: AtomicIsize = AtomicIsize::new(0);
+    static EXTRA_EX_STYLE: AtomicU32 = AtomicU32::new(0);
+    unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        match msg {
+            // winit shifts an undecorated window's client area down by 1 px (to get a DWM shadow);
+            // the client area must be the whole window so the frame lines up with it.
+            WM_NCCALCSIZE if wparam != 0 => return 0,
+            // winit rewrites the extended style whenever the window moves or resizes.
+            WM_STYLECHANGING if wparam as i32 == GWL_EXSTYLE => {
+                unsafe { (*(lparam as *mut STYLESTRUCT)).styleNew |= EXTRA_EX_STYLE.load(Ordering::Relaxed) };
+            }
+            _ => {}
+        }
+        let original: WNDPROC = unsafe { std::mem::transmute(ORIGINAL.load(Ordering::Relaxed)) };
+        unsafe { CallWindowProcW(original, hwnd, msg, wparam, lparam) }
+    }
+
+    let hwnd = hwnd as HWND;
+    let extra = WS_EX_LAYERED | if click_through { WS_EX_TRANSPARENT } else { 0 };
+    EXTRA_EX_STYLE.store(extra, Ordering::Relaxed);
+    unsafe {
+        if ORIGINAL.load(Ordering::Relaxed) == 0 {
+            ORIGINAL.store(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, proc as *const () as isize), Ordering::Relaxed);
+        }
+        SetWindowLongW(hwnd, GWL_EXSTYLE, GetWindowLongW(hwnd, GWL_EXSTYLE) | extra as i32);
+        SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
+/// Shows one frame (premultiplied RGBA, top row first, `w`×`h` physical pixels) in a layered window.
+#[cfg(target_os = "windows")]
+pub fn present_layered(hwnd: isize, w: i32, h: i32, rgba: impl Iterator<Item = [u8; 4]>) {
+    use windows_sys::Win32::Foundation::{POINT, SIZE};
+    use windows_sys::Win32::Graphics::Gdi::*;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    unsafe {
+        let screen = GetDC(std::ptr::null_mut());
+        let mem = CreateCompatibleDC(screen);
+        let mut info: BITMAPINFO = std::mem::zeroed();
+        info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        info.bmiHeader.biWidth = w;
+        info.bmiHeader.biHeight = -h; // top-down
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
+        let bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
+        if !bitmap.is_null() && !bits.is_null() {
+            let dst = std::slice::from_raw_parts_mut(bits as *mut u8, (w * h * 4) as usize);
+            for (px, [r, g, b, a]) in dst.chunks_exact_mut(4).zip(rgba) {
+                px.copy_from_slice(&[b, g, r, a]);
+            }
+            let old = SelectObject(mem, bitmap);
+            let size = SIZE { cx: w, cy: h };
+            let origin = POINT { x: 0, y: 0 };
+            let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
+            UpdateLayeredWindow(hwnd as _, screen, std::ptr::null(), &size, mem, &origin, 0, &blend, ULW_ALPHA);
+            SelectObject(mem, old);
+            DeleteObject(bitmap);
+        }
+        DeleteDC(mem);
+        ReleaseDC(std::ptr::null_mut(), screen);
+    }
+}
+
 // ---------- macOS ----------
 
 #[cfg(target_os = "macos")]
