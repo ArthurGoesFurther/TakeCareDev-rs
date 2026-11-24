@@ -24,11 +24,19 @@ jobs:
       - run: cargo test --locked
       - run: cargo build --release --locked
       - name: Package
+        if: runner.os != 'macOS'
         shell: bash
         run: |
           mkdir dist
           cp target/release/${{ matrix.bin }} dist/
           cp README.md dist/
+      # macOS: a zipped TakeCareDev.app (ditto keeps the bundle's permissions and signature intact).
+      - name: Package app
+        if: runner.os == 'macOS'
+        run: |
+          scripts/macos-app.sh build
+          mkdir dist
+          ditto -c -k --keepParent build/TakeCareDev.app dist/takecaredev-${{ matrix.name }}.zip
       - uses: actions/upload-artifact@v4
         with:
           name: takecaredev-${{ matrix.name }}
@@ -47,7 +55,10 @@ jobs:
       - name: Zip each platform
         run: |
           cd artifacts
-          for d in */; do (cd "$d" && chmod +x takecaredev* && zip -r "../${d%/}.zip" .); done
+          for d in */; do
+            if [ -e "$d${d%/}.zip" ]; then mv "$d${d%/}.zip" .; continue; fi  # already zipped (macOS app)
+            (cd "$d" && chmod +x takecaredev* && zip -r "../${d%/}.zip" .)
+          done
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*.zip
