@@ -158,8 +158,9 @@ Pushing a `v*` tag builds all three platforms on GitHub Actions and publishes a 
   Idle time comes from Mutter (`org.gnome.Mutter.IdleMonitor` over D-Bus); on other Wayland
   compositors idle-based features are disabled. On Wayland the face appears next to the cursor but
   can't follow it.
-- **Windows:** tray, pointer, monitors, idle time, autostart and notifications are implemented, but
-  it has not been tested on a real machine yet — reports are welcome.
+- **Windows:** tested on Windows 11 (two monitors, 100% scaling). Transparent windows (the face, the
+  break card) are layered windows fed with `UpdateLayeredWindow`, because transparent OpenGL windows
+  show up empty or white depending on the driver. Mixed-DPI monitors have not been tried.
 - Only one copy runs at a time (a fixed local port, `127.0.0.1:47821`, is the lock); launching it
   again opens the settings of the running copy.
 
