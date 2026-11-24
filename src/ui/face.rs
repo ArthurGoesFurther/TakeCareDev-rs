@@ -221,7 +221,9 @@ impl eframe::App for FaceApp {
         let duration = self.cfg.duration_sec as f32;
         let left = (duration - t).max(0.0);
         let alpha = if left > 0.0 { (t / FADE_IN).min(1.0) } else { 1.0 - (t - duration) / FADE_OUT };
-        if alpha <= 0.0 {
+        // Only the fade-out may close the window: the fade-in starts at alpha 0 too (on Windows
+        // `Instant` ticks at 100 ns, so a fast first frame sees exactly zero elapsed time).
+        if left <= 0.0 && alpha <= 0.0 {
             ctx.send_viewport_cmd(ViewportCommand::Close);
             return;
         }
@@ -287,6 +289,7 @@ impl eframe::App for FaceApp {
             bar(egui::Rect::from_min_size(pos2(x0, y), vec2(rect.width() - 20.0 - secs_w - 8.0, 6.0)));
             p.text(pos2(rect.right() - 10.0, y + 3.0), Align2::RIGHT_CENTER, secs, FontId::monospace(11.0), fade(INK));
         });
+        super::present(&ctx);
         ctx.request_repaint_after(Duration::from_millis(33));
     }
 }

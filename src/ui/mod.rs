@@ -21,6 +21,8 @@ pub fn icon() -> egui::IconData {
 /// `overlay` windows (face, break) stay out of the macOS Dock and app switcher.
 #[allow(unused_variables)]
 pub fn run(title: &str, viewport: egui::ViewportBuilder, overlay: bool, app: impl FnOnce(&egui::Context) -> Box<dyn eframe::App> + 'static) {
+    #[cfg(target_os = "windows")]
+    let (transparent, click_through) = (viewport.transparent == Some(true), viewport.mouse_passthrough == Some(true));
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions { viewport: viewport.with_icon(icon()), ..Default::default() };
     #[cfg(target_os = "macos")]
@@ -30,11 +32,42 @@ pub fn run(title: &str, viewport: egui::ViewportBuilder, overlay: bool, app: imp
             builder.with_activation_policy(ActivationPolicy::Accessory);
         }));
     }
-    let result = eframe::run_native(title, options, Box::new(|cc| Ok(app(&cc.egui_ctx))));
+    let result = eframe::run_native(
+        title,
+        options,
+        Box::new(move |cc| {
+            #[cfg(target_os = "windows")]
+            if transparent {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                if let Ok(RawWindowHandle::Win32(h)) = cc.window_handle().map(|h| h.as_raw()) {
+                    crate::platform::layered_window(h.hwnd.get(), click_through);
+                    let _ = LAYERED_HWND.set(h.hwnd.get());
+                }
+            }
+            Ok(app(&cc.egui_ctx))
+        }),
+    );
     if let Err(e) = result {
         eprintln!("[tcdev] window failed: {e}");
         std::process::exit(1);
     }
+}
+
+#[cfg(target_os = "windows")]
+static LAYERED_HWND: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
+
+/// Call at the end of every frame of a transparent window. On Windows its content reaches the
+/// screen only this way (see `platform::layered_window`); elsewhere this does nothing.
+pub fn present(ctx: &egui::Context) {
+    #[cfg(target_os = "windows")]
+    if let Some(&hwnd) = LAYERED_HWND.get() {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |image| {
+            let [w, h] = image.size;
+            crate::platform::present_layered(hwnd, w as i32, h as i32, image.pixels.iter().map(|c| c.to_array()));
+        })));
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = ctx;
 }
 
 /// A sprite uploaded as a texture; redrawn only when its `key` changes.
