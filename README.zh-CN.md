@@ -131,7 +131,7 @@ scripts/macos-app.sh /Applications           # macOS：构建并安装 TakeCareD
 - **Linux（GNOME，Wayland/XWayland）：** 已测试。窗口在 XWayland 下运行，这样才能按坐标放置窗口并找到鼠标
   （屏幕会被一个透明的探测窗口短暂覆盖）。空闲时间来自 Mutter（通过 D-Bus 调用 `org.gnome.Mutter.IdleMonitor`）；
   在其他 Wayland 合成器上，依赖空闲时间的功能会被关闭。在 Wayland 下小脸只能出现在鼠标旁边，无法跟随。
-- **Windows：** 托盘、鼠标、显示器、空闲时间、开机自启和通知都已实现，但还没有在真机上测试过——欢迎反馈。
+- **Windows：** 已在 Windows 11 上测试（两台显示器，100% 缩放）。透明窗口（小脸、休息卡片）是分层窗口，画面通过 `UpdateLayeredWindow` 提交，因为透明的 OpenGL 窗口会因驱动不同而显示为空白或白色。不同缩放比例的多显示器尚未测试。
 - 同一时间只运行一个实例（用固定的本地端口 `127.0.0.1:47821` 作锁）；再次启动会打开正在运行实例的设置。
 
 ## 参考资料
